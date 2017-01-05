@@ -2,6 +2,8 @@
 # Kernel configuration targets
 # These targets are used from top-level makefile
 
+PKG_CONFIG ?= pkg-config
+
 PHONY += menuconfig config silentoldconfig update-po-config \
 	localmodconfig localyesconfig
 
@@ -199,8 +201,8 @@ YACC_PREFIX_zconf	:= zconf
 HOSTLOADLIBES_mconf   = $(shell $(CONFIG_SHELL) $(check-lxdialog) -ldflags $(HOSTCC))
 
 HOSTLOADLIBES_nconf	= $(shell \
-				pkg-config --libs menuw panelw ncursesw 2>/dev/null \
-				|| pkg-config --libs menu panel ncurses 2>/dev/null \
+				$(PKG_CONFIG) --libs menuw panelw ncursesw 2>/dev/null \
+				|| $(PKG_CONFIG) --libs menu panel ncurses 2>/dev/null \
 				|| echo "-lmenu -lpanel -lncurses"  )
 
 $(obj)/zconf.tab.o: $(obj)/zconf.lex.c $(obj)/zconf.hash.c
