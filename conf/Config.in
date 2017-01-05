@@ -1,0 +1,51 @@
+# Emission and Immunity Testing Configuration
+
+mainmenu "Emission/Immunity, WiFi and BT Radio Test Configuration"
+
+choice
+	prompt "Select Test Type"
+
+config WIFI
+	bool "802.11 WiFi Radio"
+
+config BT_BREDR
+	bool "Bluetooth BR/EDR Radio"
+
+config BT_BLE
+	bool "Bluetooth Low-Energy Radio"
+
+config EMCEMI
+	bool "Emission/Immunity"
+
+endchoice
+
+config TEST_TYPE
+	string
+	default "wifi" if WIFI
+	default "bt" if BT_BREDR
+	default "bt" if BT_BLE
+	default "stress" if EMCEMI
+
+choice
+	prompt "Antenna Selection"
+
+config ANT_UFL
+	bool "u.FL connector"
+
+config ANT_PCB
+	bool "On-PCB Antenna"
+
+endchoice
+
+config ANT
+	string
+	default "ufl" if ANT_UFL
+	default "pcb" if ANT_PCB
+
+if WIFI
+source conf/wifi/Config.in
+endif # WIFI
+
+if BT_BREDR || BT_BLE
+source conf/bt/Config.in
+endif # BT_BREDR || BT_BLE

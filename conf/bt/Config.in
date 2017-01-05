@@ -1,0 +1,104 @@
+# Bluetooth Testing Configuration
+
+choice
+	prompt "Radio TXRX Mode"
+
+config BT_TX
+	bool "Transmit"
+
+config BT_RX
+	bool "Receive"
+
+endchoice
+
+config BT_CHANNEL
+	int
+	prompt "Channel"
+	default 0
+	range 0 39 if BT_BLE
+	range 0 78 if BT_BREDR
+	help
+		Channel Number
+
+
+comment "Bluetooth (BREDR) Transmitter Properties"
+	depends on BT_BREDR && BT_TX
+
+comment "Bluetooth (BLE) Transmitter Properties"
+	depends on BT_BLE && BT_TX
+
+choice
+	prompt "Modulation / Rate"
+	depends on BT_TX && BT_BREDR
+	help
+		Select modulation / rates from:
+			BREDR: DH1, DH3, DH5, 2DH1, 2DH3, 2DH5, 3DH1, 3DH3, 3DH5
+			BLE: LE
+
+config BT_BREDR_DH1
+	bool "DH1"
+
+config BT_BREDR_DH3
+	bool "DH3"
+
+config BT_BREDR_DH5
+	bool "DH5"
+
+config BT_BREDR_2DH1
+	bool "2DH1"
+
+config BT_BREDR_2DH3
+	bool "2DH3"
+
+config BT_BREDR_2DH5
+	bool "2DH5"
+
+config BT_BREDR_3DH1
+	bool "3DH1"
+
+config BT_BREDR_3DH3
+	bool "3DH3"
+
+config BT_BREDR_3DH5
+	bool "3DH5"
+
+endchoice
+
+config BT_RATE
+	int
+	depends on BT_TX
+	range 0 9
+	default "0" if BT_BREDR_DH1
+	default "1" if BT_BREDR_DH3
+	default "2" if BT_BREDR_DH5
+	default "3" if BT_BREDR_2DH1
+	default "4" if BT_BREDR_2DH3
+	default "5" if BT_BREDR_2DH5
+	default "6" if BT_BREDR_3DH1
+	default "7" if BT_BREDR_3DH3
+	default "8" if BT_BREDR_3DH5
+	default "9" if BT_BLE
+
+choice
+	depends on BT_TX && BT_BREDR
+	prompt "Transmit Mode"
+
+config BT_TX_CONTINUOUS
+	bool "Continuous Transmit"
+
+config BT_TX_PACKETS
+	bool "Packet Transmit"
+
+config BT_TX_DWELL
+	bool "Dwell Time via Single Channel Hopping"
+
+config BT_TX_HOP
+	bool "Channel Hopping Pattern"
+
+endchoice
+
+config BT_TX_PACKET_COUNT
+	int "Number of Transmitted Packets"
+	depends on BT_TX_PACKETS
+	default 0
+	range 0 4000

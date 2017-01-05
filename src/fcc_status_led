@@ -1,0 +1,20 @@
+#!/bin/sh
+
+STATUS_LED=${STATUS_LED:-"/sys/class/leds/chip:white:status"}
+
+if [ -w "${STATUS_LED}/trigger" ]; then
+	echo oneshot > "${STATUS_LED}/trigger"
+	echo 1 > "${STATUS_LED}/shot"
+
+	while sleep 1; do
+		if [ -x "${STATUS_CMD}" ]; then
+			if "${STATUS_CMD}" > /dev/null 2>&1; then
+				echo 1 > "${STATUS_LED}/shot"
+			fi
+		fi
+	done > /dev/null 2>&1 &
+
+else
+	echo "WARNING: status LED not availble or controllable"
+	echo "   STATUS_LED=${STATUS_LED}"
+fi

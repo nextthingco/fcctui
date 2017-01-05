@@ -1,0 +1,105 @@
+#!/bin/sh
+
+# No need to override describe_test() from em_test
+
+
+stress_globals() {
+	export CPU_HOGS=4
+	export IO_HOGS=4
+	export VM_HOGS=2
+	export HDD_HOGS=2
+
+	export TOTAL_HOGS=$(( CPU_HOGS + IO_HOGS + VM_HOGS + HDD_HOGS ))
+
+	export STRESS_STATUS_CMD=/tmp/fcc_stress_status_cmd
+}
+
+
+stress_usage(){
+cat << EOF
+usage: $0 [command]
+	commands:
+		start	- start the stress test, blink LED for activity
+		stop	- stop the stress test
+		status	- print stress test activity status to terminal
+EOF
+}
+
+
+stress_status_substitutions() {
+	# Substitutions:
+	#	TOTAL_HOGS with var ${TOTAL_HOGS}
+	sed -e "s/TOTAL_HOGS/${TOTAL_HOGS}/"
+}
+
+stress_create_status_cmd() {
+(cat | stress_status_substitutions > "${STRESS_STATUS_CMD}") << 'EOF'
+#!/bin/sh
+
+STATE="SUCCESS"
+STRESS_PIDS=$(ps a -o comm | grep '^stress' | wc -l)
+
+[ ${STRESS_PIDS} -lt TOTAL_HOGS ] && STATE="ERROR"
+
+echo "loadavg: $(cat /proc/loadavg)"
+echo "${STATE}: Found ${STRESS_PIDS} stress processes active"
+
+# set exit code
+[ "${STATE}" = "SUCCESS" ]
+EOF
+
+chmod a+x "${STRESS_STATUS_CMD}"
+}
+
+
+stress_start() {
+	source "${EM_CONFIG_ACTIVE}"
+
+	stress_create_status_cmd
+
+	set_antenna ${ANT}
+
+	STATUS_CMD="${STRESS_STATUS_CMD}" fcc_status_led
+
+	fcc_start
+
+	stress --cpu ${CPU_HOGS} --io ${IO_HOGS} --vm ${VM_HOGS} \
+		--hdd ${HDD_HOGS} --vm-bytes 64M --hdd-bytes 256M > /dev/null 2>&1 &
+}
+
+
+stress_stop() {
+	rm -f "${STRESS_STATUS_CMD}"
+	killall -q stress
+	killall -q fcc_status_led
+}
+
+
+stress_status() {
+	[ -x "${STRESS_STATUS_CMD}" ] && "${STRESS_STATUS_CMD}"
+}
+
+
+stress_main() {
+	stress_globals
+
+	case $1 in
+		start)
+			stress_start
+			;;
+		stop)
+			stress_stop
+			;;
+		status)
+			stress_status
+			;;
+		*)
+			stress_usage
+			;;
+	esac
+}
+
+
+if [ "$(basename $0)" = "fcc_stress" ]; then
+	stress_main $@
+fi

@@ -1,0 +1,15 @@
+#!/bin/sh
+
+execute() {
+	$@ > /dev/null 2>&1
+	STATUS=$?
+
+	if [ $? -ne 0 ]; then
+		echo "Failed running: $@"
+		return ${STATUS}
+	fi
+}
+
+
+execute iwpriv wlan0 $@
+

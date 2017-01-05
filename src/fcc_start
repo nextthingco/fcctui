@@ -1,0 +1,25 @@
+#!/bin/sh
+
+execute() {
+	$@ > /dev/null 2>&1
+	STATUS=$?
+
+	if [ $? -ne 0 ]; then
+		echo "Failed running: $@"
+		return ${STATUS}
+	fi
+}
+
+
+execute /etc/init.d/S65_bluetoothd stop
+execute /etc/init.d/S60rtk_hciattach stop
+execute modprobe -r bnep
+execute modprobe -r bluetooth
+execute modprobe -r ecb
+execute modprobe -r cmac
+
+execute /etc/init.d/S45connman stop
+execute /etc/init.d/S20_rtl8723ds_mp_wifi stop
+
+execute killall -q wpa_supplicant
+execute /sbin/bt_reset

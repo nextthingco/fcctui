@@ -1,0 +1,270 @@
+#!/bin/sh
+
+# Override describe_test() from em_test with wifi config details
+describe_test() {
+	local CONF_FILE=""
+
+	case $1 in
+		active)
+			if [ -f "${EM_CONFIG_ACTIVE}" ]; then
+				CONF_FILE="${EM_CONFIG_ACTIVE}"
+			else
+				echo "NoActiveConfig"
+			fi
+			;;
+		setup)
+			if [ -f "${EM_CONFIG_FILE}" ]; then
+				CONF_FILE="${EM_CONFIG_FILE}"
+			else
+				echo "NoSetupConfig"
+			fi
+			;;
+		*)
+			echo "NotAvailable"
+			;;
+	esac
+
+	if [ -f "${CONF_FILE}" ]; then
+		(source ${CONF_FILE};
+			if [ -n "${WIFI_TX}" ]; then
+				TXRX=tx
+			else
+				TXRX=rx
+			fi;
+			echo ${TEST_TYPE}_${TXRX}
+		)
+	fi
+}
+
+
+execute() {
+	echo $@
+	$@
+	STATUS=$?
+
+	if [ $? -ne 0 ]; then
+		echo "Failed running: $@"
+		exec_if_function $(describe_test active)_stop
+		exit ${STATUS}
+	fi
+}
+
+
+exec_if_function() {
+	if type $1 | head -n 1 | grep -q ' function$'; then
+		local cmd=$1
+		shift
+		${cmd} $@
+	else
+		echo "WARNING: $1 is not a function"
+		return 10
+	fi
+}
+
+
+wifi_globals() {
+	export WIFI_IFNAME=wlan0
+
+	export WIFI_STATUS_CMD=/tmp/fcc_wifi_status_cmd
+}
+
+
+wifi_status_substitutions() {
+	# Substitutions:
+	#	WIFI_IFNAME with var ${WIFI_IFNAME}
+	#	TEST_DESC with function "describe_test setup"
+	#
+	# NOTE: using '|' as separators to avoid escaping '/' in file paths
+	sed -e "s|WIFI_IFNAME|${WIFI_IFNAME}|" \
+			-e "s|TEST_DESC|$(describe_test setup)|"
+}
+
+
+wifi_tx_create_status_cmd() {
+(cat | wifi_status_substitutions > "${WIFI_STATUS_CMD}") << 'EOF'
+#!/bin/sh
+
+STATE="SUCCESS"
+
+echo
+
+iwpriv WIFI_IFNAME mp_query
+iwpriv WIFI_IFNAME mp_tx setting
+STATUS="$(iwpriv WIFI_IFNAME mp_ctx)"
+
+echo "${STATUS}"
+echo
+
+echo "${STATUS}" | grep -q Error && STATE="ERROR"
+
+echo "${STATE}: Found TEST_DESC test active"
+
+# set exit code
+[ "${STATE}" = "SUCCESS" ]
+EOF
+
+chmod a+x "${WIFI_STATUS_CMD}"
+}
+
+
+wifi_tx_stop() {
+	w mp_ctx stop
+	w_stop
+
+	rm -f "${WIFI_STATUS_CMD}"
+}
+
+
+wifi_tx_start() {
+	if wifi_status > /dev/null 2>&1; then
+		echo "WARNING: test already active, not updating config"
+		exit
+	else
+		source "${EM_CONFIG_ACTIVE}"
+
+		wifi_tx_create_status_cmd
+
+		execute set_antenna ${ANT}
+		execute w mp_channel ${WIFI_CHANNEL}
+		execute w mp_bandwidth 40M=${WIFI_BW},shortGI=${WIFI_GI}
+		execute w mp_ant_tx a
+		execute w mp_rate ${WIFI_RATE}
+
+		#TXPOWER=${TXPOWER:-$(iwpriv wlan0 mp_get_txpower | awk '{print $3}')}
+		#execute w mp_txpower ${TXPOWER}
+
+		TX_OPTS="${WIFI_TXMODE}"
+		[ "0${WIFI_TX_PACKET_COUNT}" -gt "0" ] && \
+			TX_OPTS="count=${WIFI_TX_PACKET_COUNT},pkt"
+
+		[ "0${WIFI_TX_PACKET_LENGTH}" -gt "0" ] && \
+			TX_OPTS="${TX_OPTS} pktlen=${WIFI_TX_PACKET_LENGTH}"
+		[ "0${WIFI_TX_PACKET_INTERVAL}" -gt "0" ] && \
+			TX_OPTS="${TX_OPTS} pktinterval=${WIFI_TX_PACKET_INTERVAL}"
+
+		execute w mp_ctx ${TX_OPTS}
+	fi
+}
+
+
+wifi_tx_update(){
+	execute w mp_ctx stop
+
+	wifi_tx_start
+}
+
+
+wifi_rx_create_status_cmd() {
+(cat | wifi_status_substitutions > "${WIFI_STATUS_CMD}") << 'EOF'
+#!/bin/sh
+
+STATE="SUCCESS"
+
+echo
+
+iwpriv WIFI_IFNAME mp_arx phy || STATE="ERROR"
+iwpriv WIFI_IFNAME mp_arx mac || STATE="ERROR"
+iwpriv WIFI_IFNAME mp_query || STATE="ERROR"
+
+echo "${STATE}: Found TEST_DESC test active"
+
+# set exit code
+[ "${STATE}" = "SUCCESS" ]
+EOF
+
+chmod a+x "${WIFI_STATUS_CMD}"
+}
+
+
+wifi_rx_stop() {
+	w mp_arx stop
+	w_stop
+
+	rm -f "${WIFI_STATUS_CMD}"
+}
+
+
+wifi_rx_start() {
+	if wifi_status > /dev/null 2>&1; then
+		echo "WARNING: test already active, not updating config"
+		exit
+	else
+		source "${EM_CONFIG_ACTIVE}"
+
+		wifi_rx_create_status_cmd
+
+		execute w mp_reset_stats
+		execute set_antenna ${ANT}
+		execute w mp_channel ${WIFI_CHANNEL}
+		execute w mp_bandwidth 40M=${WIFI_BW},shortGI=0
+		execute w mp_ant_rx a
+
+		execute w mp_arx start
+	fi
+}
+
+
+wifi_rx_update(){
+	execute w mp_arx stop
+
+	wifi_rx_start
+}
+
+
+wifi_usage(){
+cat <<EOF
+usage: $0 [command]
+	commands:
+		start	- start the wifi test, blink LED for activity
+		stop	- stop the wifi test
+		status	- print wifi test activity status to terminal
+EOF
+}
+
+
+wifi_start() {
+	STATUS_CMD="${WIFI_STATUS_CMD}" fcc_status_led
+	fcc_start
+	w_start
+
+	exec_if_function $(describe_test active)_start
+}
+
+
+wifi_stop() {
+	exec_if_function $(describe_test active)_stop
+	w_stop
+
+	killall -q fcc_status_led
+	echo "WiFi testing stopped, power-cycle recommended"
+}
+
+
+wifi_status() {
+	[ -x "${WIFI_STATUS_CMD}" ] && "${WIFI_STATUS_CMD}"
+}
+
+
+wifi_main() {
+	wifi_globals
+
+	case $1 in
+		start)
+			wifi_start
+			;;
+		stop)
+			wifi_stop
+			;;
+		status)
+			wifi_status
+			;;
+		*)
+			wifi_usage
+			;;
+	esac
+}
+
+
+if [ "$(basename $0)" = "fcc_wifi" ]; then
+	wifi_main $@
+fi

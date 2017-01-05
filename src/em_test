@@ -1,0 +1,184 @@
+#!/bin/sh
+
+STATUS_LED=${STATUS_LED:-"/sys/class/leds/chip:white:status"}
+
+EM_CONFIG_DIR=${EM_CONFIG_DIR:-/em_config}
+
+EM_CONFIG_FILE="${EM_CONFIG_DIR}/.config"
+EM_CONFIG_ACTIVE="${EM_CONFIG_DIR}/.activeconfig"
+
+EM_KCONFIG="${EM_CONFIG_DIR}/conf/Config.in"
+
+EM_TEST_ACTIVE="${EM_CONFIG_DIR}/.active.lock"
+
+execute() {
+  echo $@
+  $@
+}
+
+
+exec_if_function() {
+	if type $1 | head -n 1 | grep -q ' function$'; then
+		local cmd=$1
+		shift
+		${cmd} $@
+	else
+		echo "WARNING: $1 is not a function"
+		return 10
+	fi
+}
+
+
+active_test_name() {
+	if [ ! -f "${EM_TEST_ACTIVE}" -a -f "${EM_CONFIG_FILE}" ]; then
+		echo $(source ${EM_CONFIG_FILE}; echo ${TEST_TYPE})
+	elif [ -f "${EM_CONFIG_ACTIVE}" ]; then
+		echo $(source ${EM_CONFIG_ACTIVE}; echo ${TEST_TYPE})
+	else
+		echo "NoConfig"
+	fi
+}
+
+
+# Override describe_test() in fcc_* scripts if switching
+# other config settings would suggest a reboot
+describe_test() {
+	local CONF_FILE=""
+
+	case $1 in
+		active)
+			if [ -f "${EM_CONFIG_ACTIVE}" ]; then
+				CONF_FILE="${EM_CONFIG_ACTIVE}"
+			else
+				echo "NoActiveConfig"
+			fi
+			;;
+		setup)
+			if [ -f "${EM_CONFIG_FILE}" ]; then
+				CONF_FILE="${EM_CONFIG_FILE}"
+			else
+				echo "NoSetupConfig"
+			fi
+			;;
+		*)
+			echo "NotAvailable"
+			;;
+	esac
+
+	if [ -f "${CONF_FILE}" ]; then
+		echo $(source ${CONF_FILE}; echo ${TEST_TYPE})
+	fi
+}
+
+
+EM_ACTIVE_TEST_DESC=$(describe_test active)
+EM_SETUP_TEST_DESC=$(describe_test setup)
+
+
+em_usage(){
+cat <<EOF
+usage: $0 [command]
+	commands:
+		setup	- configure the test parameters
+		start	- start the test, blink LED for activity
+		stop	- stop the test
+		status	- print test activity status to terminal
+EOF
+}
+
+
+em_onboot() {
+	if [ -f "${EM_TEST_ACTIVE}" ]; then
+		rm -f "${EM_TEST_ACTIVE}"
+		if [ -f "${EM_CONFIG_ACTIVE}" ]; then
+			em_start
+		fi
+	fi
+}
+
+
+em_setup() {
+	cd "${EM_CONFIG_DIR}"
+
+	conf --oldaskconfig "${EM_KCONFIG}"
+
+	cd - > /dev/null
+}
+
+
+em_start() {
+	if [ -f "${EM_TEST_ACTIVE}" ]; then
+		echo "WARNING: test already active, stop it or confirm status"
+		exit 1
+	fi
+
+	if [ -f "${EM_CONFIG_ACTIVE}" -a \
+			"${EM_CONFIG_ACTIVE}" -ot "${EM_CONFIG_FILE}" ]; then
+		if [ "$(describe_test setup)" != "$(describe_test active)" ]; then
+			echo "WARNING: reboot recommended when switching test type"
+			echo "$(describe_test setup) != $(describe_test active)"
+		fi
+	fi
+	cp -a "${EM_CONFIG_FILE}" "${EM_CONFIG_ACTIVE}"
+
+	exec_if_function $(active_test_name)_globals
+	exec_if_function $(active_test_name)_start
+
+	touch "${EM_TEST_ACTIVE}"
+}
+
+
+em_stop() {
+	exec_if_function $(active_test_name)_globals
+	exec_if_function $(active_test_name)_stop
+
+	rm -f "${EM_TEST_ACTIVE}"
+}
+
+
+em_status() {
+	if [ -f "${EM_CONFIG_ACTIVE}" -a \
+			"${EM_CONFIG_ACTIVE}" -ot "${EM_CONFIG_FILE}" ]; then
+		cat "${EM_CONFIG_ACTIVE}" | grep -v '^#\|^$'
+	else
+		cat "${EM_CONFIG_FILE}" | grep -v '^#\|^$'
+	fi
+
+	exec_if_function $(active_test_name)_globals
+	exec_if_function $(active_test_name)_status
+	[ -f "${EM_TEST_ACTIVE}" ] && echo ACTIVE || echo STOPPED
+}
+
+
+em_main() {
+	if [ -n "$(which fcc_$(active_test_name))" ]; then
+		source $(which fcc_$(active_test_name))
+	elif [ "$(active_test_name)" != "NoConfig" ]; then
+		echo "WARNING: no file fcc_$(active_test_name) found to source"
+	fi
+
+	case $1 in
+		setup)
+			em_setup
+			;;
+		start)
+			em_start
+			;;
+		stop)
+			em_stop
+			;;
+		status)
+			em_status
+			;;
+		onboot)
+			em_onboot
+			;;
+		*)
+			em_usage
+			;;
+	esac
+}
+
+if [ "$(basename $0)" = "em_test" ]; then
+	em_main $@
+fi

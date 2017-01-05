@@ -1,0 +1,128 @@
+# WiFi Testing Configuration
+
+config WIFI_CHANNEL
+	int "Channel"
+	default 1
+	range 0 14
+	help
+		Channel number (1-14)
+
+choice
+	prompt "Radio TXRX Mode"
+
+config WIFI_TX
+	bool "Transmit"
+
+config WIFI_RX
+	bool "Receive"
+
+endchoice
+
+choice
+	prompt "Channel Bandwidth"
+
+config WIFI_BW_20MHZ
+	bool "20 MHz"
+
+config WIFI_BW_40MHZ
+	bool "40 MHz"
+
+endchoice
+
+config WIFI_BW
+	string
+	default "0" if WIFI_BW_20MHZ
+	default "1" if WIFI_BW_40MHZ
+
+comment "WiFi (802.11) Transmitter Properties"
+	depends on WIFI_TX
+
+choice
+	prompt "Guard Interval"
+	depends on WIFI_TX
+
+config WIFI_GI_LONG
+	bool "Long"
+
+config WIFI_GI_SHORT
+	bool "Short"
+
+endchoice
+
+config WIFI_GI
+	string
+	depends on WIFI_TX
+	default "0" if WIFI_GI_LONG
+	default "1" if WIFI_GI_SHORT
+
+config WIFI_RATE
+	string "Modulation / Rate"
+	depends on WIFI_TX
+	default "HTMCS7"
+	help
+		Select modulations / rates from:
+			802.11b: 1M 2M 5.5M 11M
+			802.11g: 6M 9M 12M 18M 24M 36M 48M 54M
+			802.11n: HTMCS0 HTMCS1 HTMCS2 HTMCS3 HTMCS4 HTMCS5 HTMCS6 HTMCS7
+
+choice
+	prompt "Transmit Mode"
+	depends on WIFI_TX
+
+config WIFI_TX_CONTINUOUS
+	bool "Continuous Transmit"
+
+config WIFI_TX_PACKETS
+	bool "Packet Transmit"
+
+config WIFI_TX_CS
+	bool "Carrier Suppression Transmit"
+
+config WIFI_TX_TONE
+	bool "Single Tone Transmit"
+
+config WIFI_TX_CARRIER
+	bool "Single Carrier Transmit"
+
+endchoice
+
+config WIFI_TXMODE
+	string
+	depends on WIFI_TX
+	default "background" if WIFI_TX_CONTINUOUS
+	default "background,pkt" if WIFI_TX_PACKETS
+	default "background,cs" if WIFI_TX_CS
+	default "background,stone" if WIFI_TX_TONE
+	default "background,sc" if WIFI_TX_CARRIER
+
+comment "WiFi Transmit Packet Settings"
+	depends on WIFI_TX_PACKETS
+
+config WIFI_TX_PACKET_COUNT
+	int "Number of Transmitted Packets"
+	depends on WIFI_TX_PACKETS
+	default 0
+	range 0 100000
+	help
+		Set number of packets to be transmitted
+		0 is continuous packet transmission
+		> 0 transmit stops after stated number of packets
+		unless packet interval specified in WIFI_TX_PACKET_INTERVAL
+
+config WIFI_TX_PACKET_LENGTH
+	int "Number of bytes per Packet"
+	depends on WIFI_TX_PACKETS && WIFI_TX_PACKET_COUNT != 0
+	default 100
+	range 0 1400
+	help
+		Set number of bytes per transmitted packet
+
+config WIFI_TX_PACKET_INTERVAL
+	int "Interval in micro-seconds"
+	depends on WIFI_TX_PACKETS && WIFI_TX_PACKET_COUNT != 0
+	default 0
+	range 0 1000
+	help
+		Set interval for packet bursts
+		0 is single packet burst
+		> 0 is delay between bursts in micro-seconds

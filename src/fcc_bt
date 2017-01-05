@@ -1,0 +1,379 @@
+#!/bin/sh
+
+# Override describe_test() from em_test with bt config details
+describe_test() {
+	local CONF_FILE=""
+
+	case $1 in
+		active)
+			if [ -f "${EM_CONFIG_ACTIVE}" ]; then
+				CONF_FILE="${EM_CONFIG_ACTIVE}"
+			else
+				echo "NoActiveConfig"
+			fi
+			;;
+		setup)
+			if [ -f "${EM_CONFIG_FILE}" ]; then
+				CONF_FILE="${EM_CONFIG_FILE}"
+			else
+				echo "NoSetupConfig"
+			fi
+			;;
+		*)
+			echo "NotAvailable"
+			;;
+	esac
+
+	if [ -f "${CONF_FILE}" ]; then
+		(source ${CONF_FILE};
+			if [ -n "${BT_BREDR}" ]; then
+				BREDRorLE=bredr
+			elif [ -n "${BT_BLE}" ]; then
+				BREDRorLE=ble
+			else
+				BREDRorLE=
+			fi;
+			if [ -n "${BT_TX}" ]; then
+				TXRX=tx
+			else
+				TXRX=rx
+			fi;
+			echo ${TEST_TYPE}_${BREDRorLE}_${TXRX}
+		)
+	fi
+}
+
+
+execute() {
+	$@
+	STATUS=$?
+
+	if [ $? -ne 0 ]; then
+		echo "Failed running: $@"
+		exec_if_function $(describe_test active)_stop
+		exit ${STATUS}
+	fi
+}
+
+
+exec_if_function() {
+	if type $1 | head -n 1 | grep -q ' function$'; then
+		local cmd=$1
+		shift
+		${cmd} $@
+	else
+		echo "WARNING: $1 is not a function"
+		return 10
+	fi
+}
+
+
+bt_globals() {
+	export BT_UART=/dev/ttyS2
+
+	export BT_STATUS_CMD=/tmp/fcc_bt_status
+	export BT_STATUS_LOG=/tmp/fcc_bt_log
+}
+
+
+bt_status_substitutions() {
+	# Substitutions:
+	#	BT_UART with var ${BT_UART}
+	#	TEST_DESC with function "describe_test setup"
+	#
+	# NOTE: using '|' as separators to avoid escaping '/' in file paths
+	sed -e "s|BT_UART|${BT_UART}|" \
+			-e "s|TEST_DESC|$(describe_test setup)|"
+}
+
+
+bt_create_status_cmd() {
+(cat | bt_status_substitutions > "${BT_STATUS_CMD}") << 'EOF'
+#!/bin/sh
+
+STATE="SUCCESS"
+
+ps a -o comm | grep -q '^rtlbtmp' || STATE="ERROR"
+
+echo "${STATE}: Found TEST_DESC test active"
+
+# set exit code
+[ "${STATE}" = "SUCCESS" ]
+EOF
+
+chmod a+x "${BT_STATUS_CMD}"
+}
+
+
+rtlbtmp_send() {
+	#echo screen -r rtlbtmp -X stuff "$@"
+	screen -r rtlbtmp -X stuff "$@\n\n\n"
+	sleep 1
+}
+
+
+rtlbtmp_stop() {
+	rtlbtmp_send "bt_mp_Exec 0"
+	rtlbtmp_send "disable"
+	rtlbtmp_send "quit"
+	screen -r rtlbtmp -X quit
+}
+
+
+rtlbtmp_start() {
+	execute screen -S rtlbtmp -t rtlbtmp -d -m -q
+	execute screen -r rtlbtmp -X logfile "${BT_STATUS_LOG}"
+	execute screen -r rtlbtmp -X log on
+
+	rtlbtmp_send "rtlbtmp"
+	sleep 10
+	rtlbtmp_send "enable uart:${BT_UART}"
+	sleep 10
+}
+
+
+bt_bredr_rx_stop() {
+	rtlbtmp_send "bt_mp_Exec 33"
+}
+
+
+bt_bredr_rx_start() {
+	if bt_status > /dev/null 2>&1; then
+		bt_bredr_rx_update
+	else
+		source "${EM_CONFIG_ACTIVE}"
+
+		bt_create_status_cmd
+
+		execute set_antenna ${ANT}
+
+		RX_OPTS="bt_mp_SetParam 1,${BT_CHANNEL}"
+
+		rtlbtmp_send "bt_mp_Exec 38"
+		rtlbtmp_send "bt_mp_Report 17"
+
+		rtlbtmp_send "${RX_OPTS}"
+
+		rtlbtmp_send "bt_mp_Exec 32"
+	fi
+}
+
+
+bt_bredr_rx_status() {
+	[ -x "${BT_STATUS_CMD}" ] && \
+		{ "${BT_STATUS_CMD}"; rtlbtmp_send "bt_mp_Report 15"; }
+}
+
+
+bt_bredr_rx_update(){
+	rtlbtmp_send "bt_mp_Exec 33"
+}
+
+
+bt_bredr_tx_stop() {
+	source "${EM_CONFIG_ACTIVE}"
+
+	[ -n "${BT_TX_CONTINUOUS}" ] && \
+		rtlbtmp_send "bt_mp_Exec 35"
+
+	[ -n "${BT_TX_PACKETS}" ] && \
+		rtlbtmp_send "bt_mp_Exec 31"
+
+	[ -n "${BT_TX_DWELL}${BT_TX_HOP}" ] && \
+		rtlbtmp_send "bt_mp_Exec 0"
+
+	rm -f ${BT_STATUS_CMD}
+}
+
+
+bt_bredr_tx_start() {
+	if bt_status > /dev/null 2>&1; then
+		bt_bredr_tx_update
+	else
+		source "${EM_CONFIG_ACTIVE}"
+
+		bt_create_status_cmd
+
+		execute set_antenna ${ANT}
+
+		TX_OPTS="bt_mp_SetParam 1,${BT_CHANNEL};2,${BT_RATE};3,0x07"
+
+		if [ -n "${BT_TX_DWELL}" ]; then
+			TX_OPTS="${TX_OPTS};10,1"
+		else
+			if [ -n "${BT_TX_HOP}" ]; then
+				TX_OPTS="${TX_OPTS};10,0"
+			fi
+		fi
+
+		[ -n "${BT_TX_PACKET_COUNT}" ] && \
+			TX_OPTS="${TX_OPTS};4,$(echo "0${BT_TX_PACKET_COUNT}" | awk '{ printf("0x%x",$1)}')"
+
+		rtlbtmp_send "bt_mp_Exec 38"
+		rtlbtmp_send "bt_mp_Report 17"
+
+		rtlbtmp_send "${TX_OPTS}"
+
+		[ -n "${BT_TX_CONTINUOUS}" ] && \
+			rtlbtmp_send "bt_mp_Exec 34"
+
+		[ -n "${BT_TX_PACKETS}" ] && \
+			rtlbtmp_send "bt_mp_Exec 30"
+
+		[ -n "${BT_TX_DWELL}${BT_TX_HOP}" ] && \
+			rtlbtmp_send "bt_mp_Exec 21"
+	fi
+}
+
+
+bt_bredr_tx_status() {
+	[ -x "${BT_STATUS_CMD}" ] && \
+		{ "${BT_STATUS_CMD}"; rtlbtmp_send "bt_mp_Report 14"; }
+}
+
+
+bt_bredr_tx_update(){
+	rtlbtmp_send "bt_mp_Exec 16"
+}
+
+
+bt_ble_rx_stop() {
+	rtlbtmp_send "bt_mp_Exec 24"
+
+	rm -f ${BT_STATUS_CMD}
+}
+
+
+bt_ble_rx_start() {
+	if bt_status > /dev/null 2>&1; then
+		bt_ble_rx_update
+	else
+		source "${EM_CONFIG_ACTIVE}"
+
+		bt_create_status_cmd
+
+		execute set_antenna ${ANT}
+
+		RX_OPTS="bt_mp_SetParam 1,${BT_CHANNEL}"
+
+		rtlbtmp_send "bt_mp_Exec 38"
+		rtlbtmp_send "bt_mp_Report 17"
+
+		rtlbtmp_send "${RX_OPTS}"
+
+		rtlbtmp_send "bt_mp_Exec 23"
+	fi
+}
+
+
+bt_ble_rx_status() {
+	[ -x "${BT_STATUS_CMD}" ] && \
+		{ "${BT_STATUS_CMD}"; rtlbtmp_send "bt_mp_Report 11"; }
+}
+
+
+bt_ble_rx_update(){
+	rtlbtmp_send "bt_mp_Exec 24"
+}
+
+
+bt_ble_tx_stop() {
+	rtlbtmp_send "bt_mp_Exec 37"
+
+	rm -f ${BT_STATUS_CMD}
+}
+
+
+bt_ble_tx_start() {
+	if bt_status > /dev/null 2>&1; then
+		bt_ble_tx_update
+	else
+		source "${EM_CONFIG_ACTIVE}"
+
+		bt_create_status_cmd
+
+		execute set_antenna ${ANT}
+
+		TX_OPTS="bt_mp_SetParam 1,${BT_CHANNEL};2,${BT_RATE};3,0x07;15,0x25"
+
+		rtlbtmp_send "bt_mp_Exec 38"
+		rtlbtmp_send "bt_mp_Report 17"
+
+		rtlbtmp_send "${TX_OPTS}"
+
+		rtlbtmp_send "bt_mp_Exec 36"
+	fi
+}
+
+
+bt_ble_tx_status() {
+	[ -x "${BT_STATUS_CMD}" ] && \
+		{ "${BT_STATUS_CMD}"; rtlbtmp_send "bt_mp_Report 16"; }
+}
+
+
+bt_ble_tx_update(){
+	rtlbtmp_send "bt_mp_Exec 23"
+}
+
+
+bt_usage(){
+cat <<EOF
+usage: $0 [command]
+	commands:
+		start	- start the bt test, blink LED for activity
+		stop	- stop the bt test
+		status	- print bt test activity status to terminal
+EOF
+}
+
+
+bt_start() {
+	STATUS_CMD="${BT_STATUS_CMD}" fcc_status_led
+	fcc_start
+
+	echo "Please be patient while bluetooth session initializes ..."
+	rtlbtmp_start
+
+	exec_if_function $(describe_test active)_start
+}
+
+
+bt_stop() {
+	exec_if_function $(describe_test active)_stop
+	rtlbtmp_stop
+
+	killall -q fcc_status_led
+	bt_reset
+	echo "Bluetooth testing stopped, power-cycle recommended"
+}
+
+
+bt_status() {
+	exec_if_function $(describe_test active)_status
+}
+
+
+bt_main() {
+	bt_globals
+
+	case $1 in
+		start)
+			bt_start
+			;;
+		stop)
+			bt_stop
+			;;
+		status)
+			bt_status
+			;;
+		*)
+			bt_usage
+			;;
+	esac
+}
+
+
+if [ "$(basename $0)" = "fcc_bt" ]; then
+	bt_main $@
+fi
