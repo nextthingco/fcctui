@@ -62,7 +62,15 @@ cmd_bt_mp_Report() {
 		return 1
 	fi
 
-	echo "running bt_mp_Report: $1"
+	case $1 in
+		17)
+			echo "bt_mp_Report,17,0x00,40,1,2,3,4"
+			;;
+		*)
+			echo "running bt_mp_Report: $1"
+			;;
+	esac
+
 	return 0
 
 	# Example report output
@@ -81,6 +89,10 @@ cmd_bt_mp_Report() {
 	# bt_mp_Report 15
 	# bt_mp_Report[Success:0]
 	# > bt_mp_Report,15,0x00,160,0x00000000,0x00000000,0x00000000
+	# bt_mp_Report 17
+	# bt_mp_Report[Success:0]
+	# > bt_mp_Report,17,0x00,40,12,12,12,32
+
 }
 
 cmd_bt_mp_True() {
@@ -118,9 +130,9 @@ while read -e -a line; do
 			cmd="${line[0]}"
 			line[0]="cmd_${line[0]}"
 			if ${line[@]}; then
-				echo "[${cmd}: Success]"
+				echo "${cmd}[Success]"
 			else
-				echo "[${cmd}: Failed]"
+				echo "${cmd}[Failed]"
 			fi
 		else
 			echo "Invalid command"

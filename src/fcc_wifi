@@ -38,7 +38,6 @@ describe_test() {
 
 
 execute() {
-	echo $@
 	$@
 	STATUS=$?
 
@@ -125,13 +124,32 @@ wifi_tx_start() {
 		wifi_tx_create_status_cmd
 
 		execute set_antenna ${ANT}
-		execute w mp_channel ${WIFI_CHANNEL}
+
+		if [ "${WIFI_BW}" -eq "1" ]; then
+			if [ "${WIFI_CHANNEL}" -lt "3" ]; then
+				# Map channel 1 & 2 to channel 3 for 40MHz bw (+10MHz offset)
+				execute w mp_channel 3
+			elif [ "${WIFI_CHANNEL}" -le "11" -a "${WIFI_CHANNEL}" -gt 9 ]; then
+				# Map channel 10 & 11 to channel 9 for 40MHz bw (-10MHz offset)
+				execute w mp_channel 9
+			elif [ "${WIFI_CHANNEL}" -gt "11" ]; then
+				# Offset by -10MHz for channel > 11
+				execute w mp_channel $(( ${WIFI_CHANNEL} - 2 ))
+			else
+				# Keep 40MHz bw centered on channel for channels 3 to 9
+				execute w mp_channel ${WIFI_CHANNEL}
+			fi
+		else
+			# No need to map channel setting for 20MHz bw
+			execute w mp_channel ${WIFI_CHANNEL}
+		fi
+
 		execute w mp_bandwidth 40M=${WIFI_BW},shortGI=${WIFI_GI}
 		execute w mp_ant_tx a
 		execute w mp_rate ${WIFI_RATE}
 
-		#TXPOWER=${TXPOWER:-$(iwpriv wlan0 mp_get_txpower | awk '{print $3}')}
-		#execute w mp_txpower ${TXPOWER}
+		TXPOWER=${TXPOWER:-$(iwpriv wlan0 mp_get_txpower | awk '{print $3}')}
+		execute w mp_txpower patha=${TXPOWER}
 
 		TX_OPTS="${WIFI_TXMODE}"
 		[ "0${WIFI_TX_PACKET_COUNT}" -gt "0" ] && \

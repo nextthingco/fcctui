@@ -73,6 +73,7 @@ bt_globals() {
 
 	export BT_STATUS_CMD=/tmp/fcc_bt_status
 	export BT_STATUS_LOG=/tmp/fcc_bt_log
+	export BT_CAPTURED_LOG=/tmp/fcc_bt_captured_log
 }
 
 
@@ -105,6 +106,22 @@ chmod a+x "${BT_STATUS_CMD}"
 }
 
 
+rtlbtmp_capture() {
+	case $1 in
+		start)
+			tail -n0 -f "${BT_STATUS_LOG}" > "${BT_CAPTURED_LOG}" &
+			;;
+		stop)
+			TAILPIDS=$(ps ax | grep "[t]ail -n0 -f ${BT_STATUS_LOG}" | awk '{print $1}')
+			if [ -n "${TAILPIDS}" ]; then
+				kill -9 ${TAILPIDS} > /dev/null 2>&1
+				wait ${TAILPIDS} > /dev/null 2>&1
+			fi
+			;;
+	esac
+}
+
+
 rtlbtmp_send() {
 	#echo screen -r rtlbtmp -X stuff "$@"
 	screen -r rtlbtmp -X stuff "$@\n\n\n"
@@ -125,10 +142,20 @@ rtlbtmp_start() {
 	execute screen -r rtlbtmp -X logfile "${BT_STATUS_LOG}"
 	execute screen -r rtlbtmp -X log on
 
+	while [ ! -f "${BT_STATUS_LOG}" ]; do sleep 1; done
+
+	rtlbtmp_capture start
+
 	rtlbtmp_send "rtlbtmp"
-	sleep 10
+	until grep -q 'Bluetooth' "${BT_CAPTURED_LOG}"; do sleep 1; done
+
 	rtlbtmp_send "enable uart:${BT_UART}"
-	sleep 10
+	until grep -q 'enable\[' "${BT_CAPTURED_LOG}"; do sleep 1; done
+
+	rtlbtmp_capture stop
+
+	grep -q 'enable\[Success' "${BT_CAPTURED_LOG}" || \
+		{ echo "Error: Failed to enable Bluetooth"; rtlbtmp_stop; exit 1; }
 }
 
 
@@ -167,6 +194,27 @@ bt_bredr_rx_status() {
 
 bt_bredr_rx_update(){
 	rtlbtmp_send "bt_mp_Exec 33"
+}
+
+
+bt_request_tx_power() {
+	rtlbtmp_capture start
+
+	rtlbtmp_send "bt_mp_Report 17"
+
+	until grep -q 'bt_mp_Report,17' "${BT_CAPTURED_LOG}"; do sleep 1; done
+
+	while IFS='' read -r line || [ -n "$line" ]; do
+		if echo "$line" | grep -q 'bt_mp_Report,17'; then
+			export BT_PWR_LINE="$line"
+			export BT_PWR_1M=$(echo "$line" | awk -F , '{print $5}')
+			export BT_PWR_2M=$(echo "$line" | awk -F , '{print $6}')
+			export BT_PWR_3M=$(echo "$line" | awk -F , '{print $7}')
+			export BT_PWR_LE=$(echo "$line" | awk -F , '{print $8}')
+			break
+		fi
+	done < "${BT_CAPTURED_LOG}"
+	rtlbtmp_capture stop
 }
 
 
@@ -210,7 +258,25 @@ bt_bredr_tx_start() {
 			TX_OPTS="${TX_OPTS};4,$(echo "0${BT_TX_PACKET_COUNT}" | awk '{ printf("0x%x",$1)}')"
 
 		rtlbtmp_send "bt_mp_Exec 38"
-		rtlbtmp_send "bt_mp_Report 17"
+		bt_request_tx_power
+
+		case ${BT_RATE} in
+			# DH1, DH3, DH5
+			0 | 1 | 2)
+				TXPOWER=${BT_PWR_1M}
+				;;
+			# 2DH1, 2DH3, 2DH5
+			3 | 4 | 5)
+				TXPOWER=${BT_PWR_2M}
+				;;
+			# 3DH1, 3DH3, 3DH5
+			6 | 7 | 8)
+				TXPOWER=${BT_PWR_3M}
+				;;
+			*)
+				echo "Error: BT_RATE setting invalid, expected 0-8, got ${BT_RATE}"
+		esac
+		TX_OPTS="${TX_OPTS};7,${TXPOWER}"
 
 		rtlbtmp_send "${TX_OPTS}"
 
@@ -297,7 +363,9 @@ bt_ble_tx_start() {
 		TX_OPTS="bt_mp_SetParam 1,${BT_CHANNEL};2,${BT_RATE};3,0x07;15,0x25"
 
 		rtlbtmp_send "bt_mp_Exec 38"
-		rtlbtmp_send "bt_mp_Report 17"
+		bt_request_tx_power
+
+		TX_OPTS="${TX_OPTS};7,${BT_PWR_LE}"
 
 		rtlbtmp_send "${TX_OPTS}"
 
